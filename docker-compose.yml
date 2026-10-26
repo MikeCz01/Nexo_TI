@@ -1,0 +1,22 @@
+
+services:
+  db:
+    image: postgres:17
+    container_name: nexoti-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nexoti
+      POSTGRES_USER: nexoti_user
+      POSTGRES_PASSWORD: nexoti_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - nexoti_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexoti_user -d nexoti"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  nexoti_postgres_data:
