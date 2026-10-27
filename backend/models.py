@@ -7,7 +7,7 @@ from sqlalchemy import (
     String,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
 
@@ -102,3 +102,4 @@ class User(Base):
         server_default=func.now(),
         nullable=False,
     )
+    role: Mapped["Role"] = relationship()
