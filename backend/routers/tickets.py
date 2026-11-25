@@ -3,7 +3,7 @@ from typing import Annotated
 from pydantic import BaseModel, Field
 from models import Role
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from auth import get_current_user, get_db
@@ -82,6 +82,7 @@ def create_ticket(
     return ticket
 
 
+
 @router.get("/", response_model=list[TicketResponse])
 def list_tickets(
     db: Annotated[Session, Depends(get_db)],
@@ -110,6 +111,115 @@ def list_tickets(
         )
 
     return db.scalars(query).all()
+
+
+@router.get("/{ticket_id}", response_model=TicketResponse)
+def get_ticket(
+    ticket_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    if current_user.role is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="El usuario no tiene un rol asignado",
+        )
+
+    ticket = db.get(Ticket, ticket_id)
+
+    if ticket is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ticket no encontrado",
+        )
+
+    role_name = current_user.role.name
+
+    if role_name == "client":
+        if ticket.client_id != current_user.client_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Ticket no encontrado",
+            )
+
+    elif role_name == "technician":
+        if ticket.assigned_to != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Ticket no encontrado",
+            )
+
+    elif role_name not in ("admin", "supervisor"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permisos para consultar tickets",
+        )
+
+    return ticket
+
+@router.get("/stats/summary")
+def get_ticket_statistics(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    if current_user.role is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="El usuario no tiene un rol asignado",
+        )
+
+    role_name = current_user.role.name
+    filters = []
+
+    if role_name == "client":
+        if current_user.client_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El usuario no tiene un cliente asociado",
+            )
+        filters.append(Ticket.client_id == current_user.client_id)
+
+    elif role_name == "technician":
+        filters.append(Ticket.assigned_to == current_user.id)
+
+    elif role_name not in ("admin", "supervisor"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permisos para consultar estadísticas",
+        )
+
+    query = (
+        select(
+            func.count(Ticket.id).label("total"),
+            func.count(Ticket.id).filter(Ticket.status == "open").label("open"),
+            func.count(Ticket.id).filter(Ticket.status == "in_progress").label("in_progress"),
+            func.count(Ticket.id).filter(Ticket.status == "resolved").label("resolved"),
+            func.count(Ticket.id).filter(Ticket.status == "closed").label("closed"),
+            func.count(Ticket.id).filter(Ticket.assigned_to.is_(None)).label("unassigned"),
+            func.count(Ticket.id).filter(Ticket.priority == "low").label("low_priority"),
+            func.count(Ticket.id).filter(Ticket.priority == "medium").label("medium_priority"),
+            func.count(Ticket.id).filter(Ticket.priority == "high").label("high_priority"),
+        )
+        .select_from(Ticket)
+        .where(*filters)
+    )
+
+    result = db.execute(query).one()
+
+    return {
+        "total": result.total,
+        "open": result.open,
+        "in_progress": result.in_progress,
+        "resolved": result.resolved,
+        "closed": result.closed,
+        "unassigned": result.unassigned,
+        "priority": {
+            "low": result.low_priority,
+            "medium": result.medium_priority,
+            "high": result.high_priority,
+        },
+    }
+
 
 class TicketAssignment(BaseModel):
     technician_id: int = Field(gt=0)
